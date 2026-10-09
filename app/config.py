@@ -27,6 +27,10 @@ class Settings:
     metal_anchor_enabled: bool = (
         os.environ.get("VERITY_METAL_ANCHOR", "false").lower() == "true"
     )
+    # Identity the authorization layer signs under (app/authz). The real
+    # Visa TAP agent identity is registered with Visa in the build window;
+    # this label is not a credential.
+    agent_id: str = os.environ.get("VERITY_AGENT_ID", "verity-agent")
 
 
 def get_settings() -> Settings:

@@ -10,9 +10,11 @@ Verity is an autonomous agent that responds to Airwallex payment disputes
 | Webhook intake | `app/webhooks.py`, `app/main.py` | Receives Airwallex dispute events (`POST /webhooks/airwallex`), checks the signature (placeholder — build-window TODO), parses `data.object` into a `Dispute`. Health check at `GET /health`. |
 | Domain models | `app/models.py` | `Dispute`, `DisputeReason`, `EvidenceItem`, `EvidencePackage` — field names mirror the Airwallex dispute object. |
 | Evidence assembly | `app/evidence.py` | Pulls the transaction record for a dispute — receipt, delivery proof / proof of delivery, terms-acceptance log, customer communications, refund / service proof — into an `EvidencePackage`, and notes gaps per reason type. Works against a `MerchantRecords` protocol; `DemoRecords` is labelled sample data for the demo/tests. |
-| Triage / EV engine | `app/triage.py`, `app/ev_engine.py` | Estimates win probability from reason-type base rate + evidence completeness, runs the EV math (below), and returns CHALLENGE / ACCEPT / ESCALATE. |
-| Representment | `app/representment.py`, `app/airwallex_client.py` | Uploads evidence files to Airwallex and submits the challenge (representment) with a defence narrative. Dry-run by default in the skeleton: it records what *would* be sent and never fakes a submission. Live API calls are build-window TODOs. |
-| Human escalation | `app/escalation.py` | Queue of borderline cases, each with a one-page summary (facts, EV math, evidence present/missing, deadline) so a human can decide in under a minute. Exposed at `GET /escalations`. |
+| Triage / EV engine | `app/triage.py`, `app/ev_engine.py` | Estimates win probability from reason-type base rate + evidence completeness, runs the EV math (below), and returns CHALLENGE / ACCEPT / ESCALATE. This is the decision layer — see the README's comparison with Airwallex's own AI Dispute Automation. |
+| Authorization gate | `app/authz/` | Visa TAP-style authorization. `policy.py`: per-action autonomous limits (above → human co-sign). `envelope.py`: canonical signed action envelopes bound to the ledger head (placeholder signer — real TAP identity/signature is a build-window TODO needing Visa partner docs/keys). `gateway.py`: authorize + execution-time verification; the representment submitter refuses unsigned, tampered, or stale envelopes before the client is touched. |
+| Representment | `app/representment.py`, `app/airwallex_client.py` | Uploads evidence files to Airwallex and submits the challenge (representment) with a defence narrative. Reached only through the authorization gateway. Dry-run by default in the skeleton: it records what *would* be sent and never fakes a submission. Live API calls are build-window TODOs. |
+| Human escalation | `app/escalation.py` | Queue of borderline cases — engine-borderline *and* policy-gated (above autonomous limits) — each with a one-page summary (facts, EV math, evidence present/missing, deadline) so a human can decide in under a minute. Exposed at `GET /escalations`. |
+| Treasury sweep | `app/treasury/` | Recovery handling. `engine.py`: deterministic sweep policy — keep the operating minimum, sweep the excess, convert foreign currency only at/above a policy rate threshold. `executor.py`: dry-run stub recording Airwallex transfer/FX intents (`executed: False`); live wiring is a build-window TODO. |
 | Decision ledger | `app/ledger.py` | Append-only, SHA-256 hash-chained log of every decision plus its evidence-manifest hash. Any later edit breaks the chain; `verify()` detects it. Exposed at `GET /ledger`. |
 | Metal L1 anchor | `app/metal_anchor.py` | Periodically anchors the ledger head hash to Metal L1 (stub in the skeleton — no wallet, no RPC, no fabricated transaction ids). |
 | Pipeline | `app/pipeline.py` | Wires intake → evidence → score → action → ledger in one pass. Skips disputes Airwallex auto-handles itself (e.g. pre-chargebacks under 60 USD are auto-accepted) so Verity never double-responds. |
@@ -34,19 +36,42 @@ Merchant records ─────────────────────
                                       CHALLENGE        ACCEPT          ESCALATE
                                           │               │                │
                                           ▼               │                ▼
-                              Representment submitter     │         Human queue
-                              (upload evidence files,     │         (one-page
-                               challenge dispute via      │          summary)
-                               Airwallex API)             │                │
+                              Authorization gate        │         Human queue
+                              (app/authz: policy        │         (one-page
+                               check + signed           │          summary)
+                               envelope, bound to       │
+                               ledger head)             │
+                                          │               │
+                                          ▼               │
+                              Representment submitter     │
+                              (upload evidence files,     │
+                               challenge dispute via      │
+                               Airwallex API)             │
                                           └───────────────┴────────────────┘
                                                               ▼
-                                                    Decision ledger (hash chain)
+                                                    Decision ledger (hash chain,
+                                                    incl. signed envelopes)
                                                               ▼
                                               Metal L1 anchor (head hash, periodic)
+
+Airwallex ──webhook: payment_dispute.won / refund settled──▶ Treasury sweep
+                                                              (app/treasury:
+                                                               keep minimum,
+                                                               sweep excess,
+                                                               FX ≥ threshold)
+                                                              ▼
+                                              Authorization gate (sweep/FX are
+                                              money-moving actions too)
+                                                              ▼
+                                              Transfer / FX intents (dry-run
+                                              stub) + ledger entry
 ```
 
-Every path — challenge, accept, escalate, and skip — ends in the ledger,
-so the audit trail is complete, not just a log of the cases Verity fought.
+Every path — challenge, accept, escalate, skip, and sweep — ends in the
+ledger, so the audit trail is complete, not just a log of the cases Verity
+fought. No money-moving action executes without a signed envelope from the
+authorization gate; actions above the autonomous limits are rerouted to
+the human queue instead of executing.
 
 ## The EV decision formula
 
@@ -111,10 +136,15 @@ is an honest stub in this skeleton).
 ## Status / honesty notes
 
 - Working today: models, evidence assembly (demo provider), EV engine,
-  escalation summaries, hash-chained ledger, pipeline, FastAPI health /
-  webhook / ledger / escalations endpoints — all covered by tests.
+  authorization gate (policy + signed envelopes + execution enforcement),
+  treasury sweep policy engine, escalation summaries, hash-chained ledger,
+  pipeline, FastAPI health / webhook / ledger / escalations endpoints —
+  all covered by tests (42 passing).
 - Stubs / TODOs: Airwallex authentication and live API calls, webhook
   signature verification, real merchant-records providers, LLM-drafted
-  narratives, ledger persistence, and the Metal L1 anchor submission.
-  Stubs raise `NotImplementedError` in live mode or report `dry_run`
-  explicitly — nothing fabricates an external response.
+  narratives, ledger persistence, the Metal L1 anchor submission, the real
+  Visa TAP signature/identity integration (placeholder signer today), and
+  live Airwallex transfer/FX execution for the sweep (dry-run intents
+  today). Stubs raise `NotImplementedError` in live mode or report
+  `dry_run` / `executed: False` explicitly — nothing fabricates an external
+  response.
