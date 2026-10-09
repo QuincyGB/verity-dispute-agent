@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+*.egg-info/
+.pytest_cache/
+dist/
+build/
+.DS_Store
+# Never commit credentials or local ledgers containing live dispute data
+*.local.json
+ledger-export*.json
