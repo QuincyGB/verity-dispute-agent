@@ -72,6 +72,7 @@ app/
   pipeline.py           Orchestrates intake -> evidence -> score -> action -> ledger
   evidence.py           Evidence assembler + merchant-records protocol (+ demo provider)
   ev_engine.py          EV scoring engine — working math, unit-tested
+  triage.py             Triage entry point: plain EV function + delegation to the engine
   representment.py      Representment submitter (dry-run honest)
   escalation.py         Human escalation queue + one-page summaries
   ledger.py             Hash-chained decision ledger — working, unit-tested
@@ -79,7 +80,8 @@ app/
   airwallex_client.py   Airwallex API client (verified paths, auth TODO)
   models.py             Dispute / evidence models mirroring Airwallex payloads
   config.py             Env-based settings (no credentials in the repo)
-tests/                  pytest suite for the EV engine, ledger, and pipeline
+tests/                  pytest suite for the EV engine, triage, ledger, and pipeline
+docs/architecture.md    Components, data flow, and the EV decision formula in full
 docs/submission-checklist.md
 ```
 
@@ -87,7 +89,7 @@ docs/submission-checklist.md
 
 This repository is the **pre-build skeleton** for the hackathon build window (Oct 25 – Nov 13, 2026):
 
-* ✅ Working + tested: EV scoring engine, hash-chain ledger, evidence completeness model, escalation summaries, pipeline wiring, FastAPI app (18 tests passing).
+* ✅ Working + tested: EV scoring engine, hash-chain ledger, evidence completeness model, escalation summaries, pipeline wiring, FastAPI app (21 tests passing).
 * 🏷️ Clearly-labelled stubs: Airwallex live calls (auth TODO), webhook signature verification (TODO), Metal L1 anchor submission (TODO).
 * 🚫 Never faked: dry-run mode records intended API calls and reports `submitted: false`. No real credentials, no invented API responses.
 
@@ -96,7 +98,7 @@ This repository is the **pre-build skeleton** for the hackathon build window (Oc
 ```bash
 python -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
-pytest                       # 18 tests
+pytest                       # 21 tests
 uvicorn app.main:app --reload
 # POST a dispute webhook shaped like the Airwallex docs sample to
 # http://127.0.0.1:8000/webhooks/airwallex and watch the decision,
